@@ -3,6 +3,8 @@
 
 # truelies
 
+[![CRAN
+status](https://www.r-pkg.org/badges/version/truelies)](https://cran.r-project.org/package=truelies)
 [![Travis build
 status](https://travis-ci.org/hughjonesd/truelies.svg?branch=master)](https://travis-ci.org/hughjonesd/truelies)
 [![AppVeyor build
@@ -20,7 +22,11 @@ For R source for the original paper, see
 ## Installation
 
 ``` r
-devtools::install_github("hughjonesd/truelies")
+# stable version on CRAN
+install.packages("truelies")
+
+# latest version from github
+remotes::install_github("hughjonesd/truelies")
 ```
 
 ## Example
@@ -42,7 +48,7 @@ dist_mean(d1)
 
 # 95% confidence interval, using hdrcde
 dist_hdr(d1, 0.95)
-#> [1] 0.060000 0.551066
+#> [1] 0.06123949 0.55000000
 ```
 
 ## Citation
@@ -55,7 +61,7 @@ Villeval (2018).” *Journal of the Economic Science Association*. doi:
 
 ## Bibtex
 
-    @Article{,
+    @Article{hughjones2019,
       title = {True Lies: Comment on Garbarino, Slonim and Villeval (2018)},
       author = {David Hugh-Jones},
       journal = {Journal of the Economic Science Association},

@@ -8,7 +8,8 @@
 #' @param N Total number in sample
 #' @param P Probability of *bad* outcome
 #' @param prior Prior over lambda. A function which takes a vector of values
-#'   between 0 and 1, and returns the probability density.
+#'   between 0 and 1, and returns the probability density. The default is
+#'   the uniform distribution.
 #'
 #' @name basic_params
 NULL
@@ -30,6 +31,8 @@ prob_report_given_lambda <- function (lambda, heads, N, P) {
 }
 
 
+is_prob <- function (p) all(p >= 0 & p <= 1)
+
 
 try_integral <- function(f, a, b, npoints = 100) {
   integ <- stats::integrate(f, a, b, subdivisions = npoints) # numerical integration
@@ -37,6 +40,7 @@ try_integral <- function(f, a, b, npoints = 100) {
 
   return(integ$value)
 }
+
 
 #' Calculate posterior distribution of the proportion of liars
 #'
@@ -66,7 +70,7 @@ try_integral <- function(f, a, b, npoints = 100) {
 #' posterior <- update_prior(heads = 30, N = 50, P = 0.5, prior = stats::dunif)
 #' plot(posterior)
 #' @export
-update_prior <- function(heads, N, P, prior, npoints = 1e3) {
+update_prior <- function(heads, N, P, prior = stats::dunif, npoints = 1e3) {
   stopifnot(heads <= N, heads >= 0, is_prob(P), is.function(prior))
 
   f <- function (lprime) prior(lprime) * prob_report_given_lambda(lprime, heads, N, P)
@@ -353,7 +357,108 @@ power_calc_difference <- function(N1, N2 = N1, P, lambda1, lambda2, alpha = 0.05
         )
 }
 
-is_prob <- function (p) all(p >= 0 & p <= 1)
+
+#' Estimate proportions of liars in multiple samples using empirical Bayes
+#'
+#' This function creates a prior by fitting a Beta distribution to the `heads/N` vector,
+#' using [MASS::fitdistr()]. The prior is then updated using data from each
+#' individual sample to give the posterior distributions.
+#'
+#' @param heads A vector of numbers of the good outcome reported
+#' @param N A vector of sample sizes
+#' @param ... Ignored
+#' @inherit basic_params params
+#'
+#' @return A list with two components:
+#'
+#' * `prior`, the calculated empirical prior (of class `densityFunction`).
+#' * `posterior`, a list of posterior distributions (objects of class `densityFunction`).
+#'   If `heads` was named, the list will have the same names.
+#'
+#' @export
+#'
+#' @examples
+#'
+#' heads <- c(Baseline = 30, Treatment1 = 38, Treatment2 = 45)
+#' N <- c(50, 52, 57)
+#' res <- empirical_bayes(heads, N, P = 0.5)
+#'
+#' compare_dists(res$posteriors$Baseline, res$posteriors$Treatment1)
+#' plot(res$prior, ylim = c(0, 4), col = "grey", lty = 2)
+#' plot(res$posteriors$Baseline, add = TRUE, col = "blue")
+#' plot(res$posteriors$Treatment1, add = TRUE, col = "orange")
+#' plot(res$posteriors$Treatment2, add = TRUE, col = "red")
+#'
+empirical_bayes <- function (heads, ...) UseMethod("empirical_bayes")
+
+
+#' @name empirical_bayes
+#' @export
+empirical_bayes.default <- function (heads, N, P, ...) {
+  if (! requireNamespace("MASS", quietly = TRUE)) {
+    stop("`empirical_bayes` requires the 'MASS' package. ",
+      "You can install it by running:\n",
+      "  install.packages(\"MASS\")")
+  }
+
+  maxlik_ests <- pmax(0, (heads/N - P)/(1 - P))
+  params <- MASS::fitdistr(maxlik_ests, stats::dbeta, list(shape1 = 1, shape2 = 1))
+  prior <- function (x) stats::dbeta(
+          x,
+          shape1 = params$estimate[["shape1"]],
+          shape2 = params$estimate[["shape2"]]
+        )
+
+  result <- list()
+  result$prior <- prior
+  attr(result$prior, "limits") <- c(0, 1)
+  class(result$prior) <- c("densityFunction", "function")
+  result$posteriors <- mapply(update_prior, heads = heads, N = N,
+          MoreArgs = list(P = P, prior = prior),
+          SIMPLIFY = FALSE, USE.NAMES = TRUE
+        )
+
+  return(result)
+}
+
+
+#' @name empirical_bayes
+#'
+#' @details
+#' The formula interface allows calling the function directly on experimental data.
+#'
+#' @param formula A two-sided formula of the form `heads ~ group`. `heads` is
+#'   a logical vector  specifying whether the "good" outcome was reported. `group`
+#'   specifies the sample.
+#' @param data A data frame or matrix. Each row represents one individual.
+#' @param subset A logical or numeric vector specifying the subset of data to use
+#'
+#' @export
+#'
+#' @examples
+#'
+#' # starting from raw data:
+#' raw_data <- data.frame(
+#'         report = sample(c("heads", "tails"),
+#'           size = 300,
+#'           replace = TRUE,
+#'           prob = c(.8, .2)
+#'         ),
+#'         group = rep(LETTERS[1:10], each = 30)
+#'     )
+#' empirical_bayes(I(report == "heads") ~ group, data = raw_data, P = 0.5)
+empirical_bayes.formula <- function (formula, data, P, subset, ...) {
+  m <- match.call(expand.dots = FALSE)
+  if (is.matrix(eval(m$data, parent.frame()))) m$data <- as.data.frame(data)
+  m[[1L]] <- quote(stats::model.frame)
+  m$P <- NULL
+  mf <- eval(m, parent.frame())
+  stopifnot(is.logical(mf[[1]]))
+  if (is.factor(mf[[2]])) mf[[2]] <- droplevels(mf[[2]])
+  heads <- tapply(mf[[1]], mf[[2]], sum)
+  N <- tapply(mf[[1]], mf[[2]], length)
+  empirical_bayes(heads = heads, N = N, P = P)
+}
 
 
 #' Print/plot an object of class `densityFunction`.
@@ -385,5 +490,6 @@ print.densityFunction <- function (x, ...) {
 #' @rdname print.densityFunction
 plot.densityFunction <- function (x, ...) {
   # ... goes first so we can override xlim or ylab
-  NextMethod(..., xlim = attr(x, "limits"), ylab = "Density")
+  NextMethod(..., xlim = attr(x, "limits"), ylab = "Density",
+        xlab = expression(lambda))
 }
